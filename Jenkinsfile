@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         // Define AWS credentials and environment variables
+        // Example: AWS credentials ID for use with Terraform
         AWS_CREDENTIALS_ID = '339712843218'
         
         // Set this to 'true' to destroy the resources
@@ -28,34 +29,59 @@ pipeline {
             }
         }
 
-        stage('Terraform Destroy') {
+        stage('Terraform Plan') {
             steps {
                 script {
-                    // Always run Terraform destroy as DESTROY_RESOURCES is set to true
+                    // Generate Terraform plan
                     withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
-                        echo "Destroying all resources..."
-                        sh 'terraform destroy --auto-approve'
+                        sh 'terraform plan -out=plan'
                     }
                 }
             }
         }
-    }
 
-    post {
-        always {
-            script {
-                // Cleanup workspace or other post-build actions
-                echo 'Cleaning up workspace...'
-                cleanWs()
+        stage('Terraform Apply') {
+            steps {
+                script {
+                    // Apply the Terraform plan with auto-approval
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
+                        sh 'terraform destroy --auto-approve tfplan'
+                    }
+                }
             }
         }
 
+    stage('Terraform Destroy') {
+        steps {
+            script {
+               if (env.DESTROY_RESOURCES == 'true') {
+                   withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
+                       sh 'terraform destroy --auto-approve'
+                  }
+               } else {
+                   echo "skipping Terraform destroy as DESTROYED_RESOURCES is set to false."
+                }
+                }
+            }
+        }   
+    }              
+                   
+    post {
+        always {
+            script {
+                //cleanup workspace or other post-build actions
+                echo 'cleaning up...'
+                cleanWs()
+              }
+         }
+                
         success {
-            echo 'Pipeline succeeded! Resources have been destroyed.'
+            echo 'Pipeline succeeded|'
         }
-
-        failure {
-            echo 'Pipeline failed! Check logs for more details.'
-        }
+    
+    failure {
+        echo 'Pipeline failed!'
     }
+ }
 }
+          
