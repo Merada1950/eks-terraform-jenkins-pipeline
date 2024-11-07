@@ -1,19 +1,17 @@
 pipeline {
-    agent any  // Use any available agent
+    agent any
 
     environment {
-        // Define AWS credentials and environment variables
-        // Example: AWS credentials ID for use with Terraform
-        AWS_CREDENTIALS_ID = '339712843218'
-        
-        // Set this to 'true' to destroy the resources
-        DESTROY_RESOURCES = 'false'
+        AWS_CREDENTIALS_ID = 'your-aws-credentials-id'
+        REGION = 'us-west-2'  // Change to your AWS region
+        EKS_CLUSTER_NAME = 'my-eks-cluster'
+        DESTROY_RESOURCES = 'false'  // Set to 'true' to destroy resources
     }
 
     stages {
         stage('Checkout SCM') {
             steps {
-                // Checkout code from the repository
+                // Checkout the code from the repository
                 checkout scm
             }
         }
@@ -21,8 +19,8 @@ pipeline {
         stage('Terraform Init') {
             steps {
                 script {
-                    // Initialize Terraform
-                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
+                    // Initialize Terraform with the AWS credentials
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: "${env.REGION}")]) {
                         sh 'terraform init'
                     }
                 }
@@ -32,56 +30,75 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 script {
-                    // Generate Terraform plan
-                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
-                        sh 'terraform plan -out=plan'
+                    // Generate the Terraform plan
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: "${env.REGION}")]) {
+                        sh 'terraform plan -out=tfplan'
                     }
                 }
             }
         }
 
         stage('Terraform Apply') {
+            when {
+                expression { env.DESTROY_RESOURCES == 'false' }  // Only apply if resources are not set to destroy
+            }
             steps {
                 script {
-                    // Apply the Terraform plan with auto-approval
-                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
-                        sh 'terraform destroy --auto-approve tfplan'
+                    // Apply the Terraform plan to create the EKS cluster
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: "${env.REGION}")]) {
+                        sh 'terraform apply --auto-approve tfplan'
                     }
                 }
             }
         }
 
-    stage('Terraform Destroy') {
-        steps {
-            script {
-               if (env.DESTROY_RESOURCES == 'true') {
-                   withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: 'us-west-1')]) {
-                       sh 'terraform destroy --auto-approve'
-                  }
-               } else {
-                   echo "skipping Terraform destroy as DESTROYED_RESOURCES is set to false."
-                }
+        stage('Configure kubectl') {
+            when {
+                expression { env.DESTROY_RESOURCES == 'false' }
+            }
+            steps {
+                script {
+                    // Fetch the EKS kubeconfig after the cluster is created
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: "${env.REGION}")]) {
+                        sh """
+                            aws eks --region ${env.REGION} update-kubeconfig --name ${env.EKS_CLUSTER_NAME}
+                        """
+                    }
                 }
             }
-        }   
-    }              
-                   
+        }
+
+        stage('Terraform Destroy') {
+            when {
+                expression { env.DESTROY_RESOURCES == 'true' }  // Only destroy if the flag is set to 'true'
+            }
+            steps {
+                script {
+                    // Destroy resources using Terraform
+                    echo "Destroying all resources..."
+                    withCredentials([aws(credentialsId: "${env.AWS_CREDENTIALS_ID}", region: "${env.REGION}")]) {
+                        sh 'terraform destroy --auto-approve'
+                    }
+                }
+            }
+        }
+    }
+
     post {
         always {
             script {
-                //cleanup workspace or other post-build actions
-                echo 'cleaning up...'
+                // Cleanup workspace after the pipeline
+                echo 'Cleaning up workspace...'
                 cleanWs()
-              }
-         }
-                
-        success {
-            echo 'Pipeline succeeded|'
+            }
         }
-    
-    failure {
-        echo 'Pipeline failed!'
+
+        success {
+            echo 'Pipeline succeeded!'
+        }
+
+        failure {
+            echo 'Pipeline failed!'
+        }
     }
- }
 }
-          
